@@ -10,7 +10,7 @@ import static com.dylibso.chicory.wasm.types.ExternalType.TAG;
 import static java.util.Objects.requireNonNullElse;
 import static java.util.Objects.requireNonNullElseGet;
 
-import com.dylibso.chicory.runtime.internal.IntWeakValueMap;
+import com.dylibso.chicory.runtime.internal.GcRefStore;
 import com.dylibso.chicory.wasm.ChicoryException;
 import com.dylibso.chicory.wasm.InvalidException;
 import com.dylibso.chicory.wasm.UninstantiableException;
@@ -54,12 +54,6 @@ import java.util.stream.Collectors;
 public class Instance {
     public static final String START_FUNCTION_NAME = "_start";
 
-    // GC ref IDs start at this offset to avoid collisions with externref
-    // values that get internalized via any.convert_extern. Since internalized
-    // externrefs and GC refs both live in the ANY hierarchy, they share the
-    // same integer representation space.
-    static final int GC_REF_ID_OFFSET = 0x10000;
-
     private final WasmModule module;
     private final Machine machine;
     private final FunctionBody[] functions;
@@ -78,8 +72,7 @@ public class Instance {
     private final Exports fluentExports;
 
     private final Map<Integer, WasmException> exnRefs;
-    private final IntWeakValueMap<long[]> arrayRefs;
-    private final IntWeakValueMap<WasmGcRef> gcRefs;
+    private final GcRefStore gcRefs;
 
     Instance(
             WasmModule module,
@@ -120,8 +113,7 @@ public class Instance {
         this.fluentExports = new Exports(this);
 
         this.exnRefs = new HashMap<>();
-        this.arrayRefs = new IntWeakValueMap<>();
-        this.gcRefs = new IntWeakValueMap<>(GC_REF_ID_OFFSET);
+        this.gcRefs = new GcRefStore(this);
 
         for (int i = 0; i < tables.length; i++) {
             long rawValue = computeConstantValue(this, tables[i].initialize())[0];
@@ -368,15 +360,7 @@ public class Instance {
         return exnRefs.get(idx);
     }
 
-    public int registerArray(long[] arr) {
-        return arrayRefs.put(arr);
-    }
-
     public long[] array(int idx) {
-        var legacy = arrayRefs.get(idx);
-        if (legacy != null) {
-            return legacy;
-        }
         var gcRef = gcRefs.get(idx);
         if (gcRef instanceof WasmArray) {
             return ((WasmArray) gcRef).elements();
